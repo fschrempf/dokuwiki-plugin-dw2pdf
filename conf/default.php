@@ -1,11 +1,7 @@
 <?php
-$conf['pagesize']         = 'A4';
-$conf['orientation']      = 'portrait';
-$conf['font-size']        = 11;
-$conf['doublesided']      = 1;
-$conf['toc']              = 0;
-$conf['toclevels']        = '';
-$conf['maxbookmarks']     = 5;
+$conf['chrome']           = 'chromium';
+$conf['pagewidth']        = 21.0;
+$conf['pageheight']       = 29.7;
 $conf['template']         = 'default';
 $conf['output']           = 'file';
 $conf['usecache']         = 1;

@@ -1,23 +1,22 @@
 <?php
 /**
- * Wrapper around the mpdf library class
+ * Wrapper around the headless Chromium engine
  *
- * This class overrides some functions to make mpdf make use of DokuWiki'
- * standard tools instead of its own.
- *
- * @author Andreas Gohr <andi@splitbrain.org>
+ * @author Frieder Schrempf <dev@fris.de>
  */
 global $conf;
 if(!defined('_MPDF_TEMP_PATH')) define('_MPDF_TEMP_PATH', $conf['tmpdir'] . '/dwpdf/' . rand(1, 1000) . '/');
 
 require_once __DIR__ . '/vendor/autoload.php';
-require __DIR__ . '/DokuImageProcessorDecorator.class.php';
+use HeadlessChromium\BrowserFactory;
 
 /**
  * Class DokuPDF
  * Some DokuWiki specific extentions
  */
-class DokuPDF extends \Mpdf\Mpdf {
+class DokuPDF {
+    protected $pagewidth;
+    protected $pageheight;
 
     /**
      * DokuPDF constructor.
@@ -26,47 +25,11 @@ class DokuPDF extends \Mpdf\Mpdf {
      * @param string $orientation
      * @param int $fontsize
      */
-    function __construct($pagesize = 'A4', $orientation = 'portrait', $fontsize = 11) {
-        global $conf;
+    function __construct($pw = 21.0, $ph = 29.7) {
+        $this->pagewidth = $pw / 2.54;
+        $this->pageheight = $ph / 2.54;
 
         io_mkdir_p(_MPDF_TEMP_PATH);
-
-        $format = $pagesize;
-        if($orientation == 'landscape') {
-            $format .= '-L';
-        }
-
-        switch($conf['lang']) {
-            case 'zh':
-            case 'zh-tw':
-            case 'ja':
-            case 'ko':
-                $mode = '+aCJK';
-                break;
-            default:
-                $mode = 'UTF-8-s';
-
-        }
-
-        // we're always UTF-8
-        parent::__construct(
-            array(
-                'mode' => $mode,
-                'format' => $format,
-                'fontsize' => $fontsize,
-                'ImageProcessorClass' => DokuImageProcessorDecorator::class,
-                'tempDir' => _MPDF_TEMP_PATH //$conf['tmpdir'] . '/tmp/dwpdf'
-            )
-        );
-
-        $this->autoScriptToLang = true;
-        $this->baseScript = 1;
-        $this->autoVietnamese = true;
-        $this->autoArabic = true;
-        $this->autoLangToFont = true;
-
-        $this->ignore_invalid_utf8 = true;
-        $this->tabSpaces = 4;
     }
 
     /**
@@ -77,13 +40,23 @@ class DokuPDF extends \Mpdf\Mpdf {
     }
 
     /**
-     * Decode all paths, since DokuWiki uses XHTML compliant URLs
-     *
-     * @param string $path
-     * @param string $basepath
+     * Request a PDF file to be rendered from HTML input
      */
-    function GetFullPath(&$path, $basepath = '') {
-        $path = htmlspecialchars_decode($path);
-        parent::GetFullPath($path, $basepath);
+    public function requestPDF($executable, $html, $header, $footer, $cachefile) {
+        $browserFactory = new BrowserFactory($executable);
+        $browser = $browserFactory->createBrowser(['sendSyncDefaultTimeout' => 10000]);
+        $page = $browser->createPage();
+        $options = [
+            'displayHeaderFooter' => true,
+            'headerTemplate' => $header,
+            'footerTemplate' => $footer,
+            'paperWidth' => $this->pagewidth,
+            'paperHeight' => $this->pageheight,
+            'marginTop' => 0.6,
+            'marginBottom' => 0.6,
+        ];
+        file_put_contents(_MPDF_TEMP_PATH . 'tmp.html', $html);
+        $page->navigate('file://' . _MPDF_TEMP_PATH . 'tmp.html')->waitForNavigation();
+        $page->pdf($options)->saveToFile($cachefile);
     }
 }

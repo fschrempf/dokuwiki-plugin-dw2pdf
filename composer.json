@@ -6,10 +6,10 @@
             "email": "andi@splitbrain.org"
         }
     ],
-    "require": {
-        "mpdf/mpdf": "8.0.*"
-    },
     "replace": {
         "paragonie/random_compat": "*"
+    },
+    "require": {
+        "chrome-php/chrome": "^0.9.0"
     }
 }

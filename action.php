@@ -101,6 +101,7 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
                 exit();
             } else {
                 //prevent Action/Export()
+                print $e->getMessage();
                 msg($e->getMessage(), -1);
                 $event->data = 'redirect';
                 return;
@@ -290,11 +291,8 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         $cachekey = join(',', $this->list)
             . $REV
             . $this->getExportConfig('template')
-            . $this->getExportConfig('pagesize')
-            . $this->getExportConfig('orientation')
-            . $this->getExportConfig('font-size')
-            . $this->getExportConfig('doublesided')
-            . ($this->getExportConfig('hasToC') ? join('-', $this->getExportConfig('levels')) : '0')
+            . $this->getExportConfig('pagewidth')
+            . $this->getExportConfig('pageheight')
             . $this->title;
         $cache = new cache($cachekey, '.dw2.pdf');
 
@@ -326,7 +324,6 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         $depends['files'] = array_map('wikiFN', $this->list);
         $depends['files'][] = __FILE__;
         $depends['files'][] = dirname(__FILE__) . '/renderer.php';
-        $depends['files'][] = dirname(__FILE__) . '/mpdf/mpdf.php';
         $depends['files'] = array_merge(
             $depends['files'],
             $dependencies,
@@ -365,6 +362,79 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         return $ret;
     }
 
+
+    protected function handleLocalImages($file) {
+        global $conf;
+
+        // build regex to parse URL back to media info
+        $re = preg_quote(ml('xxx123yyy', '', true, '&', true), '/');
+        $re = str_replace('xxx123yyy', '([^&\?]*)', $re);
+
+        // extract the real media from a fetch.php uri and determine mime
+        if(preg_match("/^$re/", $file, $m) ||
+            preg_match('/[&\?]media=([^&\?]*)/', $file, $m)
+        ) {
+            $media = rawurldecode($m[1]);
+            list($ext, $mime) = mimetype($media);
+        } else {
+            list($ext, $mime) = mimetype($file);
+        }
+
+        // local files
+        $local = '';
+        if(substr($file, 0, 9) == 'dw2pdf://') {
+            // support local files passed from plugins
+            $local = substr($file, 9);
+        } elseif(!preg_match('/(\.php|\?)/', $file)) {
+            $re = preg_quote(DOKU_URL, '/');
+            // directly access local files instead of using HTTP, skip dynamic content
+            $local = preg_replace("/^$re/i", DOKU_INC, $file);
+        }
+        
+        if(substr($mime, 0, 6) == 'image/') {
+            if(!empty($media)) {
+                // any size restrictions?
+                $w = $h = 0;
+                $rev = '';
+                if(preg_match('/[\?&]w=(\d+)/', $file, $m)) $w = $m[1];
+                if(preg_match('/[\?&]h=(\d+)/', $file, $m)) $h = $m[1];
+                if(preg_match('/[&\?]rev=(\d+)/', $file, $m)) $rev = $m[1];
+
+                if(media_isexternal($media)) {
+                    $local = media_get_from_URL($media, $ext, -1);
+                    if(!$local) $local = $media; // let mpdf try again
+                } else {
+                    $media = cleanID($media);
+                    //check permissions (namespace only)
+                    if(auth_quickaclcheck(getNS($media) . ':X') < AUTH_READ) {
+                        $file = '';
+                        $local = '';
+                    } else {
+                        $local = mediaFN($media, $rev);
+                    }
+                }
+
+                //handle image resizing/cropping
+                if($w && file_exists($local)) {
+                    if($h) {
+                        $local = media_crop_image($local, $ext, $w, $h);
+                    } else {
+                        $local = media_resize_image($local, $ext, $w, $h);
+                    }
+                }
+            } elseif(!file_exists($local) && media_isexternal($file)) { // fixed external URLs
+                $local = media_get_from_URL($file, $ext, $conf['cachetime']);
+            } elseif($local) {
+                $local = DOKU_INC . $local;
+            }
+
+            if($local)
+                $file = $local;
+        }
+
+        return $file;
+    }
+
     /**
      * Build a pdf from the html
      *
@@ -378,107 +448,27 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         if ($event->data == 'export_pdf') { //only one page is exported
             $rev = $REV;
             $date_at = $DATE_AT;
-        } else { //we are exporting entire namespace, ommit revisions
+        } else { //we are exporting entire namespace, omit revisions
             $rev = $date_at = '';
         }
 
-        //some shortcuts to export settings
-        $hasToC = $this->getExportConfig('hasToC');
-        $levels = $this->getExportConfig('levels');
         $isDebug = $this->getExportConfig('isDebug');
-        $watermark = $this->getExportConfig('watermark');
-
-        // initialize PDF library
-        require_once(dirname(__FILE__) . "/DokuPDF.class.php");
-
-        $mpdf = new DokuPDF($this->getExportConfig('pagesize'),
-                            $this->getExportConfig('orientation'),
-                            $this->getExportConfig('font-size'));
-
-        // let mpdf fix local links
-        $self = parse_url(DOKU_URL);
-        $url = $self['scheme'] . '://' . $self['host'];
-        if($self['port']) {
-            $url .= ':' . $self['port'];
-        }
-        $mpdf->SetBasePath($url);
-
-        // Set the title
-        $mpdf->SetTitle($this->title);
-
-        // some default document settings
-        //note: double-sided document, starts at an odd page (first page is a right-hand side page)
-        //      single-side document has only odd pages
-        $mpdf->mirrorMargins = $this->getExportConfig('doublesided');
-        $mpdf->setAutoTopMargin = 'stretch';
-        $mpdf->setAutoBottomMargin = 'stretch';
-//            $mpdf->pagenumSuffix = '/'; //prefix for {nbpg}
-        if($hasToC) {
-            $mpdf->PageNumSubstitutions[] = array('from' => 1, 'reset' => 0, 'type' => 'i', 'suppress' => 'off'); //use italic pageno until ToC
-            $mpdf->h2toc = $levels;
-        } else {
-            $mpdf->PageNumSubstitutions[] = array('from' => 1, 'reset' => 0, 'type' => '1', 'suppress' => 'off');
-        }
-
-        // Watermarker
-        if($watermark) {
-            $mpdf->SetWatermarkText($watermark);
-            $mpdf->showWatermarkText = true;
-        }
 
         // load the template
         $template = $this->load_template();
 
         // prepare HTML header styles
-        $html = '';
-        if($isDebug) {
-            $html .= '<html><head>';
-            $html .= '<style type="text/css">';
-        }
+        $html = '<html><head>';
+        $html .= '<style type="text/css">';
+        $html .= $this->load_css();
 
-        $styles = '@page { size:auto; ' . $template['page'] . '}';
-        $styles .= '@page :first {' . $template['first'] . '}';
+        $html .= '</style>';
+        $html .= '</head><body>';
 
-        $styles .= '@page landscape-page { size:landscape }';
-        $styles .= 'div.dw2pdf-landscape { page:landscape-page }';
-        $styles .= '@page portrait-page { size:portrait }';
-        $styles .= 'div.dw2pdf-portrait { page:portrait-page }';
-        $styles .= $this->load_css();
-
-        $mpdf->WriteHTML($styles, 1);
-
-        if($isDebug) {
-            $html .= $styles;
-            $html .= '</style>';
-            $html .= '</head><body>';
-        }
-
-        $body_start = $template['html'];
-        $body_start .= '<div class="dokuwiki">';
+        $html .= '<div class="dokuwiki">';
 
         // insert the cover page
-        $body_start .= $template['cover'];
-
-        $mpdf->WriteHTML($body_start, 2, true, false); //start body html
-        if($isDebug) {
-            $html .= $body_start;
-        }
-        if($hasToC) {
-            //Note: - for double-sided document the ToC is always on an even number of pages, so that the following content is on a correct odd/even page
-            //      - first page of ToC starts always at odd page (so eventually an additional blank page is included before)
-            //      - there is no page numbering at the pages of the ToC
-            $mpdf->TOCpagebreakByArray(
-                array(
-                    'toc-preHTML' => '<h2>' . $this->getLang('tocheader') . '</h2>',
-                    'toc-bookmarkText' => $this->getLang('tocheader'),
-                    'links' => true,
-                    'outdent' => '1em',
-                    'resetpagenum' => true, //start pagenumbering after ToC
-                    'pagenumstyle' => '1'
-                )
-            );
-            $html .= '<tocpagebreak>';
-        }
+        $html .= $template['cover'];
 
         // loop over all pages
         $counter = 0;
@@ -493,28 +483,35 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             }
             $pagehtml .= $this->page_depend_replacements($template['cite'], $page);
             if($counter < $no_pages) {
-                $pagehtml .= '<pagebreak />';
+                $pagehtml .= '<div class="pagebreak"></div>';
             }
 
-            $mpdf->WriteHTML($pagehtml, 2, false, false); //intermediate body html
-            if($isDebug) {
-                $html .= $pagehtml;
-            }
+            $html .= $pagehtml;
         }
 
         // insert the back page
-        $body_end = $template['back'];
+        $html .= $template['back'];
 
-        $body_end .= '</div>';
+        $html .= '</div>';
 
-        $mpdf->WriteHTML($body_end, 2, false, true); // finish body html
-        if($isDebug) {
-            $html .= $body_end;
-            $html .= '</body>';
-            $html .= '</html>';
+        $html .= '</body>';
+        $html .= '</html>';
+
+        // fix local urls
+        /*
+        $self = parse_url(DOKU_URL);
+        $url = $self['scheme'] . '://' . $self['host'];
+        if($self['port']) {
+            $url .= ':' . $self['port'];
         }
+        */
 
-        //Return html for debugging
+        // Rewrite local image sources and prefetch images if necessary
+        $html = preg_replace_callback('/(src=)(?!\s*[\'"]?(?:https?:)?\/\/)\s*(?:[\'"])?([^\'"]*)[\'"]/', function($m) {
+            return $m[1] . 'file://' . $this->handleLocalImages(htmlspecialchars_decode($m[2]));
+        }, $html);
+
+        // Return html for debugging
         if($isDebug) {
             if($INPUT->str('debughtml', 'text', true) == 'html') {
                 echo $html;
@@ -525,8 +522,9 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             exit();
         }
 
-        // write to cache file
-        $mpdf->Output($cachefile, 'F');
+        require_once(dirname(__FILE__) . "/DokuPDF.class.php");
+        $pdf = new DokuPDF($this->exportConfig['pagewidth'], $this->exportConfig['pageheight']);
+        $pdf->requestPDF($this->getConf('chrome'), $html, $template['header'], $template['footer'], $cachefile);
     }
 
     /**
@@ -575,40 +573,16 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         // this is what we'll return
         $output = array(
             'cover' => '',
-            'html'  => '',
-            'page'  => '',
-            'first' => '',
+            'back' => '',
+            'header'  => '',
+            'footer'  => '',
             'cite'  => '',
         );
 
-        // prepare header/footer elements
-        $html = '';
-        foreach(array('header', 'footer') as $section) {
-            foreach(array('', '_odd', '_even', '_first') as $order) {
-                $file = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/' . $section . $order . '.html';
-                if(file_exists($file)) {
-                    $html .= '<htmlpage' . $section . ' name="' . $section . $order . '">' . DOKU_LF;
-                    $html .= file_get_contents($file) . DOKU_LF;
-                    $html .= '</htmlpage' . $section . '>' . DOKU_LF;
-
-                    // register the needed pseudo CSS
-                    if($order == '_first') {
-                        $output['first'] .= $section . ': html_' . $section . $order . ';' . DOKU_LF;
-                    } elseif($order == '_even') {
-                        $output['page'] .= 'even-' . $section . '-name: html_' . $section . $order . ';' . DOKU_LF;
-                    } elseif($order == '_odd') {
-                        $output['page'] .= 'odd-' . $section . '-name: html_' . $section . $order . ';' . DOKU_LF;
-                    } else {
-                        $output['page'] .= $section . ': html_' . $section . $order . ';' . DOKU_LF;
-                    }
-                }
-            }
-        }
-
         // prepare replacements
         $replace = array(
-            '@PAGE@'    => '{PAGENO}',
-            '@PAGES@'   => '{nbpg}', //see also $mpdf->pagenumSuffix = ' / '
+            '@PAGE@'    => '<span class="pageNumber"></span>',
+            '@PAGES@'   => '<span class="totalPages"></span>',
             '@TITLE@'   => hsc($this->title),
             '@WIKI@'    => $conf['title'],
             '@WIKIURL@' => DOKU_URL,
@@ -619,10 +593,21 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             '@TPLINC@'  => DOKU_INC . 'lib/plugins/dw2pdf/tpl/' . $this->tpl . '/'
         );
 
-        // set HTML element
-        $html = str_replace(array_keys($replace), array_values($replace), $html);
-        //TODO For bookcreator $ID (= bookmanager page) makes no sense
-        $output['html'] = $this->page_depend_replacements($html, $ID);
+        // header
+        $headerfile = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/header.html';
+        if(file_exists($headerfile)) {
+            $output['header'] = file_get_contents($headerfile);
+            $output['header'] = str_replace(array_keys($replace), array_values($replace), $output['header']);
+            $output['header'] = $this->page_depend_replacements($output['header'], $ID);
+        }
+
+        // footer
+        $footerfile = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/footer.html';
+        if(file_exists($footerfile)) {
+            $output['footer'] = file_get_contents($footerfile);
+            $output['footer'] = str_replace(array_keys($replace), array_values($replace), $output['footer']);
+            $output['footer'] = $this->page_depend_replacements($output['footer'], $ID);
+        }
 
         // cover page
         $coverfile = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/cover.html';
@@ -633,7 +618,7 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             $output['cover'] .= '<pagebreak />';
         }
 
-        // cover page
+        // back page
         $backfile = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/back.html';
         if(file_exists($backfile)) {
             $output['back'] = '<pagebreak />';
@@ -888,60 +873,8 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         $this->exportConfig = array();
 
         // decide on the paper setup from param or config
-        $this->exportConfig['pagesize'] = $INPUT->str('pagesize', $this->getConf('pagesize'), true);
-        $this->exportConfig['orientation'] = $INPUT->str('orientation', $this->getConf('orientation'), true);
-
-        // decide on the font-size from param or config
-        $this->exportConfig['font-size'] = $INPUT->str('font-size', $this->getConf('font-size'), true);
-
-        $doublesided = $INPUT->bool('doublesided', (bool) $this->getConf('doublesided'));
-        $this->exportConfig['doublesided'] = $doublesided ? '1' : '0';
-
-        $this->exportConfig['watermark'] = $INPUT->str('watermark', '');
-
-        $hasToC = $INPUT->bool('toc', (bool) $this->getConf('toc'));
-        $levels = array();
-        if($hasToC) {
-            $toclevels = $INPUT->str('toclevels', $this->getConf('toclevels'), true);
-            list($top_input, $max_input) = explode('-', $toclevels, 2);
-            list($top_conf, $max_conf) = explode('-', $this->getConf('toclevels'), 2);
-            $bounds_input = array(
-                'top' => array(
-                    (int) $top_input,
-                    (int) $top_conf
-                ),
-                'max' => array(
-                    (int) $max_input,
-                    (int) $max_conf
-                )
-            );
-            $bounds = array(
-                'top' => $conf['toptoclevel'],
-                'max' => $conf['maxtoclevel']
-
-            );
-            foreach($bounds_input as $bound => $values) {
-                foreach($values as $value) {
-                    if($value > 0 && $value <= 5) {
-                        //stop at valid value and store
-                        $bounds[$bound] = $value;
-                        break;
-                    }
-                }
-            }
-
-            if($bounds['max'] < $bounds['top']) {
-                $bounds['max'] = $bounds['top'];
-            }
-
-            for($level = $bounds['top']; $level <= $bounds['max']; $level++) {
-                $levels["H$level"] = $level - 1;
-            }
-        }
-        $this->exportConfig['hasToC'] = $hasToC;
-        $this->exportConfig['levels'] = $levels;
-
-        $this->exportConfig['maxbookmarks'] = $INPUT->int('maxbookmarks', $this->getConf('maxbookmarks'), true);
+        $this->exportConfig['pagewidth'] = $INPUT->str('pagewidth', $this->getConf('pagewidth'), true);
+        $this->exportConfig['pageheight'] = $INPUT->str('pageheight', $this->getConf('pageheight'), true);
 
         $tplconf = $this->getConf('template');
         $tpl = $INPUT->str('tpl', $tplconf, true);
