@@ -150,35 +150,6 @@ class renderer_plugin_dw2pdf extends Doku_Renderer_xhtml {
     }
 
     /**
-     * Wrap centered media in a div to center it
-     *
-     * @param string $src       media ID
-     * @param string $title     descriptive text
-     * @param string $align     left|center|right
-     * @param int    $width     width of media in pixel
-     * @param int    $height    height of media in pixel
-     * @param string $cache     cache|recache|nocache
-     * @param bool   $render    should the media be embedded inline or just linked
-     * @return string
-     */
-    function _media($src, $title = NULL, $align = NULL, $width = NULL,
-                    $height = NULL, $cache = NULL, $render = true) {
-
-        $out = '';
-        if($align == 'center') {
-            $out .= '<div align="center" style="text-align: center">';
-        }
-
-        $out .= parent::_media($src, $title, $align, $width, $height, $cache, $render);
-
-        if($align == 'center') {
-            $out .= '</div>';
-        }
-
-        return $out;
-    }
-
-    /**
      * hover info makes no sense in PDFs, so drop acronyms
      *
      * @param string $acronym
