@@ -8,7 +8,7 @@
 */
 class dw2pdf_syntax_exportlink_test extends DokuWikiTest {
 
-    public function setUp() {
+    public function setUp() : void {
         parent::setUp();
     }
 

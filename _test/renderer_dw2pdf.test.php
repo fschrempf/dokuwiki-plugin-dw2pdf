@@ -22,7 +22,7 @@ class renderer_plugin_dw2pdfdummy extends renderer_plugin_dw2pdf {
  */
 class dw2pdf_renderer_dw2pdf_test extends DokuWikiTest {
 
-    public function setUp() {
+    public function setUp() : void {
         parent::setUp();
     }
 
