@@ -47,6 +47,10 @@ img.mediaright {
     float: right;
 }
 
+img.icon.smiley {
+    height:1.2em;
+}
+
 blockquote {
     border-left: 3px solid #cccccc;
     margin: 0;
