@@ -69,24 +69,14 @@ class renderer_plugin_dw2pdf extends Doku_Renderer_xhtml {
 
         $hid = $this->_headerToLink($text, true);
 
+        $check = false;
+        $hid = sectionID($ID, $check) . '__' . $hid;
+
         //only add items within global configured levels (doesn't check the pdf toc settings)
         $this->toc_additem($hid, $text, $level);
 
-        $check = false;
-        $pid = sectionID($ID, $check);
-        $hid = $pid . '__' . $hid;
-
-        // add PDF bookmark
-        $bookmark = '';
-        $maxbookmarklevel = $this->actioninstance->getExportConfig('maxbookmarks');
-        // 0: off, 1-6: show down to this level
-        if($maxbookmarklevel && $maxbookmarklevel >= $level) {
-            $bookmarklevel = $this->calculateBookmarklevel($level);
-            $bookmark = '<bookmark content="' . $this->_xmlEntities($text) . '" level="' . ($bookmarklevel) . '" />';
-        }
-
         // print header
-        $this->doc .= DOKU_LF . "<h$level>$bookmark";
+        $this->doc .= DOKU_LF . "<h$level id=\"$hid\" class=\"title-element\" data-title-level=\"h$level\">";
         $this->doc .= "<a name=\"$hid\">";
         $this->doc .= $this->_xmlEntities($text);
         $this->doc .= "</a>";

@@ -1,0 +1,197 @@
+@media print {
+    header.cover .title {
+        font-size: 3em;
+        string-set: title content(text);
+    }
+
+    header.cover .subtitle {
+        font-size: 1.5em;
+        string-set: subtitle content(text);
+    }
+
+    h1 {
+        string-set: chapter content(text), chapterAfter content(after);
+        break-before: page;
+    }
+
+    h1[data-title-level=h1]:not(.nonumber) {
+        counter-increment: counterHeadLevel1;
+        counter-reset: counterHeadLevel2;
+    }
+
+    h2[data-title-level=h2]:not(.nonumber) {
+        counter-increment: counterHeadLevel2;
+    }
+
+    h1[data-title-level=h1]:not(.nonumber)::before {
+        content: counter(counterHeadLevel1) " ";
+    }
+
+    h2[data-title-level=h2]:not(.nonumber)::before {
+        content: counter(counterHeadLevel1) "." counter(counterHeadLevel2) " ";
+    }
+
+    h2 {
+        string-set: sub content(text);
+    }
+
+    #plugin__struct_output {
+        break-before: page;
+    }
+
+    .pagedjs_margin.pagedjs_margin-left-top .pagedjs_margin-content {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .pagedjs_margin-bottom {
+        grid-template-columns: 6fr 0px 1fr !important;
+    }
+
+    @page:first {
+        @top-left {
+            content: "";
+        }
+
+        @top-right {
+            content: "";
+        }
+
+        @left-top {
+            content: "";
+            background-color: transparent;
+        }
+
+        @bottom-left {
+            content: "";
+        }
+
+        @bottom-right {
+            content: "";
+        }
+    }
+
+    @page {
+        size: A4;
+        margin: 30mm;
+
+        @top-left {
+            content: "";
+        }
+
+        @top-right {
+            content: string(sub);
+        }
+
+        @bottom-left {
+            content: string(title) " - " string(subtitle);
+        }
+
+        @bottom-right {
+            content: counter(page);
+        }
+
+        @left-top {
+            content: string(chapter);
+            background-color: #dd4b1e;
+            color: white;
+            font-weight: bold;
+            width: 35mm;
+            height: 15mm;
+            transform: rotate(-90deg);
+            transform-origin: top left;
+            position: relative;
+            top: 35mm;
+        }
+    }
+
+    /* TOC */
+
+    /* set the style for the list numbering to none */
+    #toc { 
+        list-style: none;
+    }
+
+    #toc .toc-element { 
+        break-inside: avoid; 
+    }
+
+    #toc .toc-element a::after {
+        content: target-counter(attr(href), page);
+        float: right;
+    }
+
+    #toc .toc-element-level-1 {
+        margin-top: 25px;
+        font-weight: bold;
+    }
+
+    #toc .toc-element-level-2 {
+        margin-left: 25px;
+    }
+
+
+
+    /* counters */
+
+    #toc{ 
+        counter-reset: counterTocLevel1;
+        padding: 0;
+    }
+
+    #toc .toc-element-level-1{ 
+        counter-increment: counterTocLevel1;
+        counter-reset: counterTocLevel2;
+    }
+
+    #toc .toc-element-level-1::before{ 
+        content: counter(counterTocLevel1) ".";
+        padding-right: 5px;
+    }
+
+    #toc .toc-element-level-2{ 
+        counter-increment: counterTocLevel2; 
+    }
+
+    #toc .toc-element-level-2::before{ 
+        content: counter(counterTocLevel1) "." counter(counterTocLevel2) ".";
+        padding-right: 5px;
+    }
+
+
+
+    /* hack for leaders */
+
+    #toc{
+        overflow-x: hidden;
+    }
+
+    /* fake leading */
+    #toc .toc-element::after{
+        content: 
+            ".............................................."
+            ".............................................."
+            ".............................................."  
+            "........";
+        float: left;
+        width: 0;
+        padding-left: 5px;
+        letter-spacing: 2px;
+    }
+
+    #toc .toc-element{
+        display: flex; 
+    }
+
+    #toc .toc-element a::after{
+        position: absolute;
+        right: 0;
+        background-color: white;
+        padding-left: 6px;
+    }
+
+    #toc .toc-element a{
+        right: 0;
+    }
+}

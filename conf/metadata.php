@@ -1,7 +1,4 @@
 <?php
-$meta['chrome']           = array('string');
-$meta['pagewidth']        = array('numeric');
-$meta['pageheight']       = array('numeric');
 $meta['template']         = array('dirchoice', '_dir' => DOKU_PLUGIN . 'dw2pdf/tpl/');
 $meta['output']           = array('multichoice', '_choices' => array('browser', 'file'));
 $meta['usecache']         = array('onoff');

@@ -7,6 +7,9 @@
  * @author     Andreas Gohr <andi@splitbrain.org>
  */
 
+global $conf;
+if(!defined('_PDF_TEMP_PATH')) define('_PDF_TEMP_PATH', $conf['tmpdir'] . '/dwpdf/' . rand(1, 1000) . '/');
+
 /**
  * Class action_plugin_dw2pdf
  *
@@ -24,6 +27,8 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
     protected $tpl;
     /** @var string title of exported pdf */
     protected $title;
+    /** @var string template variables of exported pdf */
+    protected $vars = array();
     /** @var array list of pages included in exported pdf */
     protected $list = array();
     /** @var bool|string path to temporary cachefile */
@@ -71,7 +76,7 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
 
         try{
             //collect pages and check permissions
-            list($this->title, $this->list) = $this->collectExportablePages($event);
+            list($this->title, $this->vars, $this->list) = $this->collectExportablePages($event);
 
             if($event->data === 'export_pdf' && ($REV || $DATE_AT)) {
                 $cachefile = tempnam($conf['tmpdir'] . '/dwpdf', 'dw2pdf_');
@@ -248,6 +253,7 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             $savedselection = $SelectionHandling->loadSavedSelection($INPUT->str('savedselection'));
             $title = $savedselection['title'];
             $title = $INPUT->str('book_title', $title, true);
+            $vars = $savedselection['vars'];
             $list = $savedselection['selection'];
 
             if(empty($title)) {
@@ -276,7 +282,7 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             throw new Exception(sprintf($this->getLang('forbidden'), $msg));
         }
 
-        return array($title, $list);
+        return array($title, $vars, $list);
     }
 
     /**
@@ -466,17 +472,20 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         $template = $this->load_template();
 
         // prepare HTML header styles
+        $toc = '<h1 class="nonumber">Inhalt</h1><ul id="toc">';
         $html = '<html><head>';
         $html .= '<style type="text/css">';
         $html .= $this->load_css();
 
         $html .= '</style>';
+        //$html .= '<script src="https://unpkg.com/pagedjs/dist/paged.polyfill.js"></script>';
         $html .= '</head><body>';
-
-        $html .= '<div class="dokuwiki">';
 
         // insert the cover page
         $html .= $template['cover'];
+        $tocpos = strlen($html);
+
+        $html .= '<div class="dokuwiki">';
 
         // loop over all pages
         $counter = 0;
@@ -495,7 +504,19 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             }
 
             $html .= $pagehtml;
+            $desc = p_get_metadata($page, 'description');
+            $check = false;
+
+            if (is_array($desc['tableofcontents'])) {
+                foreach($desc['tableofcontents'] as $entry) {
+                    if ($entry['level'] <= 2)
+                        $toc .= '<li class="toc-element toc-element-level-' . $entry['level'] . '"><a href="#' . sectionID($page, $check) . '__' . $entry['hid'] . '">' . $entry['title'] . '</a></li>';
+                }
+            }
         }
+
+        $toc .= '</ul>';
+        $html = substr_replace($html, $toc, $tocpos, 0);
 
         // insert the back page
         $html .= $template['back'];
@@ -504,15 +525,6 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
 
         $html .= '</body>';
         $html .= '</html>';
-
-        // fix local urls
-        /*
-        $self = parse_url(DOKU_URL);
-        $url = $self['scheme'] . '://' . $self['host'];
-        if($self['port']) {
-            $url .= ':' . $self['port'];
-        }
-        */
 
         // Rewrite local image sources and prefetch images if necessary
         $html = preg_replace_callback('/(src=)(?!\s*[\'"]?(?:https?:)?\/\/)\s*(?:[\'"])?([^\'"]*)[\'"]/', function($m) {
@@ -524,15 +536,16 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             if($INPUT->str('debughtml', 'text', true) == 'html') {
                 echo $html;
             } else {
-                header('Content-Type: text/plain; charset=utf-8');
+                header('Content-Type: text/html; charset=utf-8');
                 echo $html;
             }
             exit();
         }
 
-        require_once(dirname(__FILE__) . "/DokuPDF.class.php");
-        $pdf = new DokuPDF($this->exportConfig['pagewidth'], $this->exportConfig['pageheight']);
-        $pdf->requestPDF($this->getConf('chrome'), $html, $template['header'], $template['footer'], $cachefile);
+        io_mkdir_p(_PDF_TEMP_PATH);
+        file_put_contents(_PDF_TEMP_PATH . 'tmp.html', $html);
+        exec('pagedjs-cli ' . _PDF_TEMP_PATH . 'tmp.html -o ' . $cachefile);
+        io_rmdir(_PDF_TEMP_PATH, true);
     }
 
     /**
@@ -601,6 +614,10 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             '@TPLINC@'  => DOKU_INC . 'lib/plugins/dw2pdf/tpl/' . $this->tpl . '/'
         );
 
+        foreach ($this->vars as $var => $value) {
+            $replace['@'. $var . '@'] = hsc($value);
+        }
+
         // header
         $headerfile = DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/header.html';
         if(file_exists($headerfile)) {
@@ -623,7 +640,6 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
             $output['cover'] = file_get_contents($coverfile);
             $output['cover'] = str_replace(array_keys($replace), array_values($replace), $output['cover']);
             $output['cover'] = $this->page_depend_replacements($output['cover'], $ID);
-            $output['cover'] .= '<pagebreak />';
         }
 
         // back page
@@ -763,6 +779,21 @@ class action_plugin_dw2pdf extends DokuWiki_Action_Plugin {
         } else {
             // @deprecated 2013-12-19: fix backward compatibility
             $css = css_applystyle($css, DOKU_INC . 'lib/tpl/' . $conf['template'] . '/');
+        }
+
+        $files = array(
+            DOKU_PLUGIN . 'dw2pdf/conf/page.css'
+                => DOKU_BASE . 'lib/plugins/dw2pdf/conf/',
+            DOKU_PLUGIN . 'dw2pdf/tpl/' . $this->tpl . '/page.css'
+                => DOKU_BASE . 'lib/plugins/dw2pdf/tpl/' . $this->tpl . '/',
+            DOKU_PLUGIN . 'dw2pdf/conf/page.local.css'
+                => DOKU_BASE . 'lib/plugins/dw2pdf/conf/',
+        );
+
+        foreach($files as $file => $location) {
+            $display = str_replace(fullpath(DOKU_INC), '', fullpath($file));
+            $css .= "\n/* XXXXXXXXX $display XXXXXXXXX */\n";
+            $css .= css_loadfile($file, $location);
         }
 
         return $css;

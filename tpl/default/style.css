@@ -1,7 +1,7 @@
 img.icon.smiley {
     height:1.2em;
 }
-
+/*
 @media print {
     .pagebreak {
         page-break-before: always; 
@@ -11,7 +11,4 @@ img.icon.smiley {
         break-inside: avoid;
     }
 }
-
-@media print {
-   
-  }
+*/
